@@ -1,0 +1,4 @@
+# Sender domains whose mail goes out through Google Workspace SMTP relay.
+{% for d in workspace_relay_domains %}
+@{{ d }} [smtp-relay.gmail.com]:587
+{% endfor %}

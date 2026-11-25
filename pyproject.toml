@@ -1,0 +1,16 @@
+[project]
+name = "mail-platform-lab"
+version = "0.1.0"
+description = "Multi-domain Postfix/Dovecot/OpenDKIM platform with SQLite-driven provisioning"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = ["integration: needs the running mail stack (run as root after ansible/site.yml)"]
+
+[tool.ruff]
+line-length = 110
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]

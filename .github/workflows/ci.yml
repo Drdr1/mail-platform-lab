@@ -1,0 +1,56 @@
+name: ci
+on:
+  push:
+  pull_request:
+
+jobs:
+  unit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pytest ruff
+      - run: ruff check .
+      - run: pytest tests/test_unit.py -q
+
+  mail-stack:
+    # Installs the real Postfix/Dovecot/OpenDKIM stack with the Ansible playbook,
+    # then runs the integration suite against it on this runner.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Ansible and test dependencies from Ubuntu
+        run: |
+          sudo apt-get update -q
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -q ansible-core python3-pytest python3-dkim
+      - name: Apply the playbook
+        run: sudo ansible-playbook -i localhost, -c local -e ansible_python_interpreter=/usr/bin/python3 ansible/site.yml
+      - name: Playbook is safe to re-run
+        run: sudo ansible-playbook -i localhost, -c local -e ansible_python_interpreter=/usr/bin/python3 ansible/site.yml
+      - name: Configuration checks
+        run: |
+          sudo postfix check
+          sudo doveconf -n > /dev/null
+          sudo opendkim -n -x /etc/opendkim.conf
+      - name: Integration tests (150 mailboxes across 3 domains)
+        run: sudo MP_INTEGRATION=1 python3 -m pytest tests -q
+      - name: Logs on failure
+        if: failure()
+        run: |
+          sudo tail -n 80 /var/log/postfix.log || true
+          sudo tail -n 80 /var/log/dovecot.log || true
+          sudo journalctl -u opendkim --no-pager -n 40 || true
+
+  terraform:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: terraform/gcp
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - run: terraform fmt -check
+      - run: terraform init -backend=false
+      - run: terraform validate

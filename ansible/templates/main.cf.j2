@@ -1,0 +1,65 @@
+# {{ ansible_managed | default('Managed by ansible/site.yml') }}
+compatibility_level = 3.6
+myhostname = {{ mail_hostname }}
+myorigin = $myhostname
+mydestination = localhost
+inet_interfaces = all
+inet_protocols = ipv4
+mynetworks = 127.0.0.0/8
+maillog_file = /var/log/postfix.log
+smtpd_banner = $myhostname ESMTP
+biff = no
+append_dot_mydomain = no
+disable_vrfy_command = yes
+message_size_limit = 26214400
+alias_maps =
+alias_database =
+
+# TLS
+smtpd_tls_cert_file = /etc/mailplatform/tls/fullchain.pem
+smtpd_tls_key_file = /etc/mailplatform/tls/privkey.pem
+smtpd_tls_security_level = may
+smtpd_tls_auth_only = yes
+smtpd_tls_protocols = >=TLSv1.2
+smtpd_tls_mandatory_protocols = >=TLSv1.2
+smtp_tls_security_level = may
+smtp_tls_loglevel = 1
+{% if workspace_relay_domains %}
+smtp_tls_policy_maps = hash:/etc/postfix/tls_policy
+{% endif %}
+
+# Virtual domains and mailboxes, all read from the platform database
+virtual_mailbox_domains = proxy:sqlite:/etc/postfix/sqlite/domains.cf
+virtual_mailbox_maps = proxy:sqlite:/etc/postfix/sqlite/mailboxes.cf
+virtual_alias_maps = proxy:sqlite:/etc/postfix/sqlite/aliases.cf
+virtual_transport = lmtp:unix:private/dovecot-lmtp
+smtpd_sender_login_maps = proxy:sqlite:/etc/postfix/sqlite/sender_login.cf
+
+# SASL through Dovecot; enabled only on the submission services in master.cf
+smtpd_sasl_type = dovecot
+smtpd_sasl_path = private/auth
+smtpd_sasl_auth_enable = no
+
+# Port 25: inbound only. No permit_mynetworks, so nothing relays without AUTH.
+smtpd_helo_required = yes
+smtpd_relay_restrictions = reject_unauth_destination
+smtpd_recipient_restrictions = reject_unlisted_recipient
+
+# Throttle abusive clients on every smtpd service
+smtpd_client_connection_rate_limit = 60
+smtpd_client_auth_rate_limit = 20
+anvil_rate_time_unit = 60s
+
+# DKIM signing (submission) and verification (inbound)
+milter_default_action = accept
+milter_protocol = 6
+smtpd_milters = inet:127.0.0.1:8891
+non_smtpd_milters = $smtpd_milters
+
+# Rate-limit policy service (spawned per connection)
+mp-policy_time_limit = 3600s
+{% if workspace_relay_domains %}
+
+# Google Workspace SMTP relay for these sender domains only (see docs/workspace-relay.md)
+sender_dependent_relayhost_maps = hash:/etc/postfix/relay_by_sender
+{% endif %}

@@ -1,0 +1,6 @@
+driver = sqlite
+connect = /etc/mailplatform/platform.db
+default_pass_scheme = SHA512-CRYPT
+password_query = SELECT address AS user, password_hash AS password FROM v_mailboxes WHERE address = '%u' AND active = 1
+user_query = SELECT '/var/vmail/' || domain || '/' || local_part AS home, 5000 AS uid, 5000 AS gid, '*:storage=' || quota_mb || 'M' AS quota_rule FROM v_mailboxes WHERE address = '%u' AND active = 1
+iterate_query = SELECT address AS user FROM v_mailboxes WHERE active = 1

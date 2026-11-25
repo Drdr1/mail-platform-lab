@@ -1,0 +1,14 @@
+# {{ ansible_managed | default('Managed by ansible/site.yml') }}
+Syslog                  yes
+LogWhy                  yes
+UMask                   007
+Mode                    sv
+Socket                  inet:8891@127.0.0.1
+PidFile                 /run/opendkim/opendkim.pid
+UserID                  opendkim
+Canonicalization        relaxed/simple
+OversignHeaders         From
+KeyTable                refile:/etc/opendkim/KeyTable
+SigningTable            refile:/etc/opendkim/SigningTable
+InternalHosts           /etc/opendkim/TrustedHosts
+ExternalIgnoreList      /etc/opendkim/TrustedHosts

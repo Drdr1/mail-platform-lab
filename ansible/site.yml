@@ -1,0 +1,188 @@
+# Installs and configures the mail platform on one Ubuntu 24.04 host.
+#   ansible-playbook -i mail.example.net, ansible/site.yml -e mail_hostname=mail.example.net
+# CI runs it against localhost with -c local.
+- name: Multi-domain mail platform
+  hosts: all
+  become: true
+  vars:
+    mail_hostname: mail.example.net
+    workspace_relay_domains: []
+    self_signed_tls: true
+    repo_root: "{{ playbook_dir }}/.."
+  tasks:
+    - name: Install Postfix without the interactive setup dialog
+      ansible.builtin.debconf:
+        name: postfix
+        question: postfix/main_mailer_type
+        value: No configuration
+        vtype: select
+      tags: [packages]
+
+    - name: Packages
+      ansible.builtin.apt:
+        name: [postfix, postfix-sqlite, dovecot-core, dovecot-imapd, dovecot-lmtpd, dovecot-sqlite,
+               opendkim, opendkim-tools, sqlite3, openssl, python3]
+        state: present
+        update_cache: true
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+      tags: [packages]
+
+    - name: Platform group
+      ansible.builtin.group:
+        name: mailplatform
+        system: true
+
+    - name: vmail group
+      ansible.builtin.group:
+        name: vmail
+        gid: 5000
+
+    - name: vmail user owns all mail storage
+      ansible.builtin.user:
+        name: vmail
+        uid: 5000
+        group: vmail
+        home: /var/vmail
+        create_home: false
+        shell: /usr/sbin/nologin
+        system: true
+
+    - name: Policy service user
+      ansible.builtin.user:
+        name: mppolicy
+        system: true
+        # spawn(8) sets only the primary group, so this must be the primary one
+        group: mailplatform
+        create_home: false
+        shell: /usr/sbin/nologin
+
+    - name: Postfix and Dovecot may read the platform database
+      ansible.builtin.user:
+        name: "{{ item }}"
+        groups: [mailplatform]
+        append: true
+      loop: [postfix, dovecot]
+
+    - name: Directories
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: "{{ item.owner }}"
+        group: "{{ item.group }}"
+        mode: "{{ item.mode }}"
+      loop:
+        - {path: /etc/mailplatform, owner: root, group: mailplatform, mode: "0750"}
+        - {path: /etc/mailplatform/tls, owner: root, group: root, mode: "0700"}
+        - {path: /var/vmail, owner: vmail, group: vmail, mode: "0770"}
+        - {path: /var/lib/mailplatform, owner: mppolicy, group: mailplatform, mode: "0750"}
+        - {path: /etc/postfix/sqlite, owner: root, group: root, mode: "0755"}
+        - {path: /etc/opendkim, owner: root, group: opendkim, mode: "0755"}
+        - {path: /etc/opendkim/keys, owner: opendkim, group: opendkim, mode: "0750"}
+        - {path: /opt/mailplatform, owner: root, group: root, mode: "0755"}
+
+    - name: Platform code
+      ansible.builtin.copy:
+        src: "{{ repo_root }}/{{ item }}"
+        dest: /opt/mailplatform/
+        mode: preserve
+      loop: [mailplatform, policyd]
+
+    - name: mp command
+      ansible.builtin.copy:
+        dest: /usr/local/bin/mp
+        mode: "0755"
+        content: |
+          #!/bin/sh
+          PYTHONPATH=/opt/mailplatform exec python3 -m mailplatform.cli "$@"
+
+    - name: Self-signed certificate (replace with a real one before production)
+      ansible.builtin.command:
+        cmd: >-
+          openssl req -x509 -newkey rsa:2048 -nodes -days 365 -subj /CN={{ mail_hostname }}
+          -keyout /etc/mailplatform/tls/privkey.pem -out /etc/mailplatform/tls/fullchain.pem
+        creates: /etc/mailplatform/tls/fullchain.pem
+      when: self_signed_tls
+
+    - name: Initialise the platform database
+      ansible.builtin.command:
+        cmd: /usr/local/bin/mp init
+        creates: /etc/mailplatform/platform.db
+
+    - name: Database permissions
+      ansible.builtin.file:
+        path: /etc/mailplatform/platform.db
+        owner: root
+        group: mailplatform
+        mode: "0640"
+
+    - name: Postfix main.cf and master.cf
+      ansible.builtin.template:
+        src: "{{ item }}.j2"
+        dest: "/etc/postfix/{{ item }}"
+        mode: "0644"
+      loop: [main.cf, master.cf]
+
+    - name: Postfix SQLite maps
+      ansible.builtin.copy:
+        src: files/sqlite/
+        dest: /etc/postfix/sqlite/
+        mode: "0644"
+
+    - name: Workspace relay maps
+      ansible.builtin.template:
+        src: "{{ item }}.j2"
+        dest: "/etc/postfix/{{ item }}"
+        mode: "0644"
+      loop: [relay_by_sender, tls_policy]
+      when: workspace_relay_domains | length > 0
+
+    - name: Build relay hash maps
+      ansible.builtin.command:
+        cmd: "postmap /etc/postfix/{{ item }}"
+      loop: [relay_by_sender, tls_policy]
+      when: workspace_relay_domains | length > 0
+      changed_when: true
+
+    - name: Dovecot configuration
+      ansible.builtin.template:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        owner: root
+        group: dovecot
+        mode: "{{ item.mode }}"
+      loop:
+        - {src: dovecot.conf.j2, dest: /etc/dovecot/dovecot.conf, mode: "0644"}
+        - {src: dovecot-sql.conf.ext.j2, dest: /etc/dovecot/dovecot-sql.conf.ext, mode: "0640"}
+
+    - name: OpenDKIM configuration
+      ansible.builtin.template:
+        src: opendkim.conf.j2
+        dest: /etc/opendkim.conf
+        mode: "0644"
+
+    - name: OpenDKIM trusted hosts
+      ansible.builtin.copy:
+        dest: /etc/opendkim/TrustedHosts
+        content: "127.0.0.1\nlocalhost\n"
+        mode: "0644"
+
+    - name: OpenDKIM tables exist before the first domain
+      ansible.builtin.file:
+        path: "/etc/opendkim/{{ item }}"
+        state: touch
+        modification_time: preserve
+        access_time: preserve
+        mode: "0644"
+      loop: [KeyTable, SigningTable]
+
+    - name: Copy resolver files into the Postfix chroot
+      ansible.builtin.command:
+        cmd: /usr/lib/postfix/configure-instance.sh
+        removes: /usr/lib/postfix/configure-instance.sh
+      changed_when: false
+
+    - name: Restart services
+      ansible.builtin.command:
+        cmd: "{{ repo_root }}/scripts/svc.sh"
+      changed_when: true

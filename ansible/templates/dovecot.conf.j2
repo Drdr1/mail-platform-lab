@@ -1,0 +1,91 @@
+# {{ ansible_managed | default('Managed by ansible/site.yml') }}
+# Standalone config: does not include conf.d, so nothing else changes behaviour.
+protocols = imap lmtp
+listen = *
+log_path = /var/log/dovecot.log
+auth_verbose = yes
+
+mail_location = maildir:~/Maildir
+mail_uid = vmail
+mail_gid = vmail
+first_valid_uid = 5000
+last_valid_uid = 5000
+mail_plugins = $mail_plugins quota
+
+ssl = required
+ssl_cert = </etc/mailplatform/tls/fullchain.pem
+ssl_key = </etc/mailplatform/tls/privkey.pem
+ssl_min_protocol = TLSv1.2
+disable_plaintext_auth = yes
+auth_mechanisms = plain login
+auth_username_format = %Lu
+
+passdb {
+  driver = sql
+  args = /etc/dovecot/dovecot-sql.conf.ext
+}
+userdb {
+  driver = sql
+  args = /etc/dovecot/dovecot-sql.conf.ext
+}
+
+namespace inbox {
+  inbox = yes
+  separator = /
+  mailbox Sent {
+    special_use = \Sent
+    auto = subscribe
+  }
+  mailbox Drafts {
+    special_use = \Drafts
+    auto = subscribe
+  }
+  mailbox Trash {
+    special_use = \Trash
+    auto = subscribe
+  }
+  mailbox Junk {
+    special_use = \Junk
+    auto = subscribe
+  }
+}
+
+service imap-login {
+  # plain IMAP is closed; clients use implicit TLS on 993
+  inet_listener imap {
+    port = 0
+  }
+  inet_listener imaps {
+    port = 993
+    ssl = yes
+  }
+}
+service lmtp {
+  unix_listener /var/spool/postfix/private/dovecot-lmtp {
+    mode = 0600
+    user = postfix
+    group = postfix
+  }
+}
+service auth {
+  unix_listener /var/spool/postfix/private/auth {
+    mode = 0660
+    user = postfix
+    group = postfix
+  }
+}
+service auth-worker {
+  user = dovecot
+  # services drop supplementary groups unless listed here
+  extra_groups = mailplatform
+}
+
+protocol imap {
+  mail_plugins = $mail_plugins imap_quota
+}
+protocol lmtp {
+  postmaster_address = postmaster@{{ mail_hostname }}
+}
+plugin {
+  quota = maildir:User quota
+}

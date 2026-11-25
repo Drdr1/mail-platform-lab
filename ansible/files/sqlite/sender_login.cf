@@ -1,0 +1,2 @@
+dbpath = /etc/mailplatform/platform.db
+query = SELECT address FROM v_mailboxes WHERE address = '%s' AND active = 1

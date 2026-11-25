@@ -1,0 +1,2 @@
+dbpath = /etc/mailplatform/platform.db
+query = SELECT destination FROM aliases WHERE source = '%s'
